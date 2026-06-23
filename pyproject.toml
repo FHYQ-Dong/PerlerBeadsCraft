@@ -1,0 +1,25 @@
+[project]
+name = "perlerbeadscraft"
+version = "0.1.0"
+description = "Turn an image into a Perler/Hama bead pattern (preview, chart, bead counts)."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
+    "pillow>=12.2.0",
+]
+
+[project.scripts]
+perler = "perlerbeadscraft.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["perlerbeadscraft"]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
