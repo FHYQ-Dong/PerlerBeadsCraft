@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ._mard_data import MARD_MIDI_RAW
+
 
 @dataclass(frozen=True)
 class BeadColor:
@@ -76,7 +78,15 @@ HAMA_MIDI = Palette(
     ),
 )
 
-_PALETTES = {p.name: p for p in (HAMA_MIDI,)}
+MARD_MIDI = Palette(
+    name="mard",
+    colors=tuple(
+        BeadColor(code=code, rgb=_hex_to_rgb(h)) for code, h in MARD_MIDI_RAW
+    ),
+)
+
+_PALETTES = {p.name: p for p in (MARD_MIDI, HAMA_MIDI)}
+DEFAULT_PALETTE = "mard"
 
 
 def list_palettes() -> list[str]:

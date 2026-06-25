@@ -9,10 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
-# Generated bead patterns / test artifacts
-output/
-output*/
+# Generated bead patterns
+output/*
+output_*/
 sample.png
 
 # images
-images/
+images/*

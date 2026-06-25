@@ -41,17 +41,55 @@ def srgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     return lab
 
 
+def nearest_lab(points_lab: np.ndarray, ref_lab: np.ndarray) -> np.ndarray:
+    """For each point (N, 3) in Lab, the index of the nearest reference (M, 3)."""
+    # (N, M) squared distances via |a-b|^2 = |a|^2 + |b|^2 - 2 a.b
+    dists = (
+        (points_lab**2).sum(axis=1)[:, None]
+        + (ref_lab**2).sum(axis=1)[None, :]
+        - 2 * points_lab @ ref_lab.T
+    )
+    return np.argmin(dists, axis=1)
+
+
 def nearest_indices(pixels_rgb: np.ndarray, palette_rgb: np.ndarray) -> np.ndarray:
     """For each pixel (N, 3) return the index of the closest palette colour.
 
     Distance is squared Euclidean in Lab space.
     """
-    pix_lab = srgb_to_lab(pixels_rgb)          # (N, 3)
-    pal_lab = srgb_to_lab(palette_rgb)         # (M, 3)
-    # (N, M) squared distances via |a-b|^2 = |a|^2 + |b|^2 - 2 a.b
-    dists = (
-        (pix_lab**2).sum(axis=1)[:, None]
-        + (pal_lab**2).sum(axis=1)[None, :]
-        - 2 * pix_lab @ pal_lab.T
-    )
-    return np.argmin(dists, axis=1)
+    return nearest_lab(srgb_to_lab(pixels_rgb), srgb_to_lab(palette_rgb))
+
+
+def kmeans_lab(points: np.ndarray, k: int, *, seed: int = 0, iters: int = 30):
+    """k-means in Lab space with k-means++ init. Returns (labels, centers).
+
+    Deterministic for a given ``seed`` so the same image yields the same palette.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    n = len(points)
+    k = min(k, n)
+    rng = np.random.default_rng(seed)
+
+    # k-means++ initialisation.
+    centers = np.empty((k, points.shape[1]))
+    centers[0] = points[rng.integers(n)]
+    d2 = ((points - centers[0]) ** 2).sum(axis=1)
+    for i in range(1, k):
+        total = d2.sum()
+        probs = d2 / total if total > 0 else np.full(n, 1 / n)
+        centers[i] = points[rng.choice(n, p=probs)]
+        d2 = np.minimum(d2, ((points - centers[i]) ** 2).sum(axis=1))
+
+    labels = np.full(n, -1)
+    for _ in range(iters):
+        new_labels = nearest_lab(points, centers)
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        for j in range(k):
+            members = points[labels == j]
+            if len(members):
+                centers[j] = members.mean(axis=0)
+            else:  # reseed an empty cluster on a random point
+                centers[j] = points[rng.integers(n)]
+    return labels, centers

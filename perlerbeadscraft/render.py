@@ -1,4 +1,4 @@
-"""Render a Pattern into a colour preview and a printable symbol chart."""
+"""Render a Pattern into a colour preview and a printable code chart."""
 
 from __future__ import annotations
 
@@ -8,18 +8,6 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .pattern import EMPTY, Pattern
-
-# Glyphs assigned to colours, in this order, for the printable chart.
-_SYMBOLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz"
-_SYMBOLS += "@#$%&*+=<>?/\\"
-
-
-def assign_symbols(pattern: Pattern) -> dict[int, str]:
-    """Map each used palette index to a unique glyph (most-used colour -> 'A')."""
-    symbols: dict[int, str] = {}
-    for n, (idx, _color, _count) in enumerate(pattern.used_colors()):
-        symbols[idx] = _SYMBOLS[n] if n < len(_SYMBOLS) else "?"
-    return symbols
 
 
 def _rgb_grid(pattern: Pattern, empty=(255, 255, 255)) -> np.ndarray:
@@ -80,25 +68,49 @@ def render_preview(
 
 
 def _draw_grid_lines(draw: ImageDraw.ImageDraw, rows: int, cols: int, cell: int) -> None:
-    light, bold = (210, 210, 210), (90, 90, 90)
+    light, dash, bold = (210, 210, 210), (140, 140, 140), (90, 90, 90)
     for c in range(cols + 1):
         x = c * cell
-        wide = c % 10 == 0
-        draw.line([(x, 0), (x, rows * cell)], fill=bold if wide else light, width=2 if wide else 1)
+        if c % 10 == 0:
+            draw.line([(x, 0), (x, rows * cell)], fill=bold, width=2)
+        elif c % 5 == 0:
+            _dashed_line(draw, (x, 0), (x, rows * cell), dash)
+        else:
+            draw.line([(x, 0), (x, rows * cell)], fill=light, width=1)
     for r in range(rows + 1):
         y = r * cell
-        wide = r % 10 == 0
-        draw.line([(0, y), (cols * cell, y)], fill=bold if wide else light, width=2 if wide else 1)
+        if r % 10 == 0:
+            draw.line([(0, y), (cols * cell, y)], fill=bold, width=2)
+        elif r % 5 == 0:
+            _dashed_line(draw, (0, y), (cols * cell, y), dash)
+        else:
+            draw.line([(0, y), (cols * cell, y)], fill=light, width=1)
+
+
+def _dashed_line(draw, p0, p1, fill, *, width=1, dash=6, gap=4) -> None:
+    """Draw a dashed axis-aligned line from p0 to p1."""
+    x0, y0 = p0
+    x1, y1 = p1
+    if x0 == x1:  # vertical
+        y = y0
+        while y < y1:
+            draw.line([(x0, y), (x0, min(y + dash, y1))], fill=fill, width=width)
+            y += dash + gap
+    else:  # horizontal
+        x = x0
+        while x < x1:
+            draw.line([(x, y0), (min(x + dash, x1), y0)], fill=fill, width=width)
+            x += dash + gap
 
 
 def render_chart(
     pattern: Pattern,
     out_path: str | Path,
     *,
-    show_symbols: bool = True,
+    show_codes: bool = True,
     dpi: int = 150,
 ) -> Path:
-    """Render a printable chart: colour grid + per-cell symbols + legend.
+    """Render a printable chart: colour grid + the bead code in each cell + legend.
 
     Imports matplotlib lazily so the rest of the package stays light.
     """
@@ -108,27 +120,29 @@ def render_chart(
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
 
-    symbols = assign_symbols(pattern)
     grid_rgb = _rgb_grid(pattern)
     rows, cols = pattern.rows, pattern.cols
 
-    fig_w = cols * 0.28 + 4.5  # extra room for the legend column
-    fig_h = max(rows * 0.28, 3) + 0.5
+    fig_w = cols * 0.32 + 4.5  # extra room for the legend column
+    fig_h = max(rows * 0.32, 3) + 0.5
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
 
     ax.imshow(grid_rgb, extent=(0, cols, rows, 0), interpolation="nearest")
 
-    # Per-cell symbols (skip when too dense to be legible).
-    if show_symbols and rows * cols <= 6000:
+    # Bead code in every cell (skip when too dense to be legible).
+    if show_codes and rows * cols <= 6000:
+        max_len = max((len(c.code) for _, c, _ in pattern.used_colors()), default=2)
+        fontsize = 5.5 if max_len <= 2 else 4.5 if max_len == 3 else 3.7
         for r in range(rows):
             for c in range(cols):
                 idx = int(pattern.grid[r, c])
                 if idx == EMPTY:
                     continue
+                color = pattern.palette.colors[idx]
                 ax.text(
-                    c + 0.5, r + 0.5, symbols[idx],
-                    ha="center", va="center", fontsize=6,
-                    color=np.array(_text_color(pattern.palette.colors[idx].rgb)) / 255,
+                    c + 0.5, r + 0.5, color.code,
+                    ha="center", va="center", fontsize=fontsize,
+                    color=np.array(_text_color(color.rgb)) / 255,
                 )
 
     _matplotlib_grid(ax, rows, cols)
@@ -137,9 +151,9 @@ def render_chart(
         Patch(
             facecolor=np.array(color.rgb) / 255,
             edgecolor="#444",
-            label=f"{symbols[idx]}  {color.label}  {color.hex}  ×{count}",
+            label=f"{color.label}  {color.hex}  ×{count}",
         )
-        for idx, color, count in pattern.used_colors()
+        for _idx, color, count in pattern.used_colors()
     ]
     ax.legend(
         handles=handles,
@@ -158,6 +172,64 @@ def render_chart(
     return out_path
 
 
+def render_color_maps(
+    pattern: Pattern,
+    out_dir: str | Path,
+    *,
+    show_codes: bool = True,
+    dpi: int = 150,
+) -> list[Path]:
+    """One image per used colour: that colour's beads marked, everything else blank.
+
+    Files are named ``<rank>_<code>_x<count>.png`` (rank by usage, most-used first)
+    so they sort in a sensible placing order. Returns the written paths.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows, cols = pattern.rows, pattern.cols
+    used = pattern.used_colors()
+    paths: list[Path] = []
+
+    for rank, (idx, color, count) in enumerate(used, start=1):
+        mask = pattern.grid == idx
+        grid_rgb = np.full((rows, cols, 3), 255, dtype=np.uint8)  # blank = white
+        grid_rgb[mask] = color.rgb
+
+        fig_w = max(cols * 0.30, 3) + 0.5
+        fig_h = max(rows * 0.30, 3) + 0.8
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+        ax.imshow(grid_rgb, extent=(0, cols, rows, 0), interpolation="nearest")
+
+        # Code in each marked cell so even pale colours are unmistakable.
+        if show_codes and int(mask.sum()) <= 4000:
+            fontsize = 5.5 if len(color.code) <= 2 else 4.5 if len(color.code) == 3 else 3.7
+            text_color = np.array(_text_color(color.rgb)) / 255
+            ys, xs = np.nonzero(mask)
+            for y, x in zip(ys.tolist(), xs.tolist()):
+                ax.text(
+                    x + 0.5, y + 0.5, color.code,
+                    ha="center", va="center", fontsize=fontsize, color=text_color,
+                )
+
+        _matplotlib_grid(ax, rows, cols)
+        ax.set_title(
+            f"{rank}/{len(used)}   {color.label}   {color.hex}   ×{count}",
+            fontsize=10,
+        )
+
+        path = out_dir / f"{rank:02d}_{color.code}_x{count}.png"
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(path)
+
+    return paths
+
+
 def _matplotlib_grid(ax, rows: int, cols: int) -> None:
     ax.set_xticks(np.arange(0, cols + 1, 10))
     ax.set_yticks(np.arange(0, rows + 1, 10))
@@ -165,6 +237,11 @@ def _matplotlib_grid(ax, rows: int, cols: int) -> None:
     ax.set_yticks(np.arange(0, rows + 1, 1), minor=True)
     ax.grid(which="minor", color="#cccccc", linewidth=0.4)
     ax.grid(which="major", color="#555555", linewidth=1.1)
+    # Dashed line every 5 cells (the halves between the bold every-10 lines).
+    for x in range(5, cols, 10):
+        ax.axvline(x, color="#888888", linewidth=0.7, linestyle=(0, (4, 3)), zorder=3)
+    for y in range(5, rows, 10):
+        ax.axhline(y, color="#888888", linewidth=0.7, linestyle=(0, (4, 3)), zorder=3)
     ax.tick_params(which="both", length=0, labelsize=7)
     ax.set_xlim(0, cols)
     ax.set_ylim(rows, 0)
